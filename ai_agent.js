@@ -275,6 +275,22 @@
         try{const r=await fetch(GAS_URL+'?action=count');const d=await r.json();return d.count!==undefined?d.count:'?';}catch{return'?';}
     }
 
+    // Fetch targets from Google Sheet via GAS getTargets action.
+    // Expects: { success:true, targets: { "district|chiefdom|phu": number } }
+    // Sheet tabs: "District Targets", "Chiefdom Targets", "School Targets"
+    async function fetchTargetsFromSheet(){
+        try{
+            const res=await Promise.race([
+                fetch(GAS_URL+'?action=getTargets'),
+                new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),6000))
+            ]);
+            if(!res.ok) return null;
+            const d=await res.json();
+            if(d.success&&d.targets) return d.targets;
+        }catch(e){console.warn('[Targets] Fetch failed:',e.message);}
+        return null;
+    }
+
     // ════════════════════════════════════════════════════════
     //  DATA MERGE  (GAS sheet + localStorage)
     // ════════════════════════════════════════════════════════
@@ -402,11 +418,28 @@
         const total=all.length;
 
         const sub=document.getElementById('anSubtitle');
-        if(sub)sub.textContent=`${total} school${total!==1?'s':''} · Last refreshed ${new Date().toLocaleTimeString('en-SL',{hour:'2-digit',minute:'2-digit'})}`;
+        if(sub)sub.textContent=`${total} school${total!==1?'s':''} submitted · Last refreshed ${new Date().toLocaleTimeString('en-SL',{hour:'2-digit',minute:'2-digit'})}`;
 
         if(!total){
             body.innerHTML=`<div class="an-no-data"><svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M3 3h18v18H3zM3 9h18M9 21V9"/></svg><div>No data matches the selected filters.</div></div>`;
             return;
+        }
+
+        // Check if targets loaded from sheet
+        const targets = window._TARGETS || {};
+        const hasTargets = Object.keys(targets).length > 0;
+        const fD = (document.getElementById('af_district')?.value||'').toLowerCase();
+        const fC = (document.getElementById('af_chiefdom')?.value||'').toLowerCase();
+        const fP = (document.getElementById('af_facility')?.value||'').toLowerCase();
+        let targetCount = 0;
+        if (hasTargets) {
+            Object.entries(targets).forEach(([k, v]) => {
+                const parts   = k.split('|');
+                const matchD  = !fD || parts[0] === fD;
+                const matchC  = !fC || parts[1] === fC;
+                const matchP  = !fP || parts[2] === fP;
+                if (matchD && matchC && matchP) targetCount += v;
+            });
         }
 
         // Aggregate
@@ -449,7 +482,10 @@
         body.innerHTML=`
         <!-- KPIs -->
         <div class="an-kpi-row">
-          <div class="an-kpi b"><div class="an-kpi-val">${total}</div><div class="an-kpi-lbl">Schools</div></div>
+          ${hasTargets && targetCount>0 ? `<div class="an-kpi b"><div class="an-kpi-val">${targetCount}</div><div class="an-kpi-lbl">Target Schools</div></div>` : ''}
+          <div class="an-kpi b"><div class="an-kpi-val">${total}</div><div class="an-kpi-lbl">Submitted</div></div>
+          ${hasTargets && targetCount>0 ? `<div class="an-kpi ${targetCount>total?'r':'g'}"><div class="an-kpi-val">${Math.max(0,targetCount-total)}</div><div class="an-kpi-lbl">Remaining</div></div>
+          <div class="an-kpi ${Math.round((total/targetCount)*100)>=80?'g':'o'}"><div class="an-kpi-val">${Math.round((total/targetCount)*100)}%</div><div class="an-kpi-lbl">Progress</div></div>` : ''}
           <div class="an-kpi"><div class="an-kpi-val">${tp.toLocaleString()}</div><div class="an-kpi-lbl">Total Pupils</div></div>
           <div class="an-kpi o"><div class="an-kpi-val">${tr.toLocaleString()}</div><div class="an-kpi-lbl">ITNs Received</div></div>
           <div class="an-kpi g"><div class="an-kpi-val">${ti.toLocaleString()}</div><div class="an-kpi-lbl">Distributed</div></div>
@@ -590,24 +626,14 @@
         if(body)body.innerHTML=`<div class="an-loading"><div class="an-spinner"></div><div class="an-load-txt">Fetching data from Google Sheets…</div></div>`;
         if(sub)sub.textContent='Loading…';
 
-        const sheetRows=await fetchSheetData();
-        _sheetRows=sheetRows;
-
-        // If no sheet rows, show setup tip
-        if(sheetRows.length===0&&getLocalRows().length===0){
-            if(body)body.innerHTML=`
-              <div class="an-no-data">
-                <svg viewBox="0 0 24 24" fill="none" stroke-width="1.5"><path d="M3 3h18v18H3zM3 9h18M9 21V9"/></svg>
-                <div style="font-size:14px;font-weight:600;color:#004080;margin-bottom:8px;">No data found</div>
-                <div style="font-size:12px;color:#607080;max-width:420px;line-height:1.7;">
-                  No submissions in session yet.<br>
-                  To load data from Google Sheets, add a <code>getData</code> action to your Apps Script 
-                  <em>doGet()</em> function — see the comment in <strong>ai_agent.js</strong> for the exact code.
-                  <br><br>Alternatively, share the sheet as "Anyone with the link can view" to enable direct CSV export.
-                </div>
-              </div>`;
-            if(sub)sub.textContent='No data available';
-            return;
+        // Fetch submissions + targets in parallel
+        const [sheetRows, targetsData] = await Promise.all([
+            fetchSheetData(),
+            fetchTargetsFromSheet()
+        ]);
+        _sheetRows = sheetRows;
+        if (targetsData && Object.keys(targetsData).length > 0) {
+            window._TARGETS = targetsData;
         }
 
         runAnalysis(sheetRows);
@@ -621,8 +647,14 @@
     window.anRefresh=async function(){
         const body=document.getElementById('analysisBody');
         if(body)body.innerHTML=`<div class="an-loading"><div class="an-spinner"></div><div class="an-load-txt">Refreshing from Google Sheets…</div></div>`;
-        const rows=await fetchSheetData();
-        _sheetRows=rows;
+        const [rows, targetsData] = await Promise.all([
+            fetchSheetData(),
+            fetchTargetsFromSheet()
+        ]);
+        _sheetRows = rows;
+        if (targetsData && Object.keys(targetsData).length > 0) {
+            window._TARGETS = targetsData;
+        }
         runAnalysis(rows);
     };
 
