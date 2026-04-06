@@ -4,7 +4,7 @@
 const CONFIG = {
     SCRIPT_URL: 'https://script.google.com/macros/s/AKfycbymRy-M5v0fVLWUjw4IXYhd1oIR2ZvnP_Dzr_iGR-Th0cMIpmE2ntGeujWYH7-C6NHIzA/exec',
     SHEET_URL:  'https://docs.google.com/spreadsheets/d/1cXlYiTMzcRP1BCj9mt1JXoK_pjgWbRtDEEQUPMg2HPs/edit?usp=sharing',
-    CSV_FILE:   'cascading_data.csv',
+    CSV_FILE:   'cascading_data1.csv',
     ADMIN_USER: 'admin',
     ADMIN_PASS: 'admin123'
 };
@@ -821,48 +821,96 @@ window.openSummaryModal = function() {
         });
     }
 
-    // School list — ONLY submitted schools, nothing from CSV
+    // School list — submitted first (green), then pending at bottom (amber)
+    const sortKey = (s) => s.district + '|' + (s.chiefdom||'') + '|' + s.school_name;
+    const sortedSubmitted = submitted.slice().sort((a,b) => sortKey(a).localeCompare(sortKey(b)));
+    const sortedPending   = pending.slice().sort((a,b)   => sortKey(a).localeCompare(sortKey(b)));
+
     let schoolRows = '';
-    if (submitted.length === 0) {
-        schoolRows = `<tr><td colspan="9" style="padding:32px;text-align:center;color:#aaa;font-style:italic;">No submissions yet — schools will appear here once data is submitted.</td></tr>`;
-    } else {
-        submitted
-          .sort((a,b)=>a.district.localeCompare(b.district)||a.chiefdom.localeCompare(b.chiefdom)||a.school_name.localeCompare(b.school_name))
-          .forEach(s => {
-              const rec      = getSubmittedRecord(s.key);
-              const when     = rec ? formatDate(rec.timestamp) : '—';
-              const coverage = rec?.data?.coverage_total ? rec.data.coverage_total+'%' : '—';
-              schoolRows += `
-                <tr style="cursor:pointer;background:#f0fff0;" onclick="openSchoolDetail('${s.key}')">
-                  <td style="padding:10px 8px;text-align:left;">
-                    <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#28a745;margin-right:8px;flex-shrink:0;"></span>
-                    <strong>${s.school_name}</strong>
-                  </td>
-                  <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.district}</td>
-                  <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.chiefdom||'—'}</td>
-                  <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.facility||'—'}</td>
-                  <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.community||'—'}</td>
-                  <td style="padding:10px 8px;text-align:center;">
-                    <span style="background:#28a745;color:#fff;border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.5px;">SUBMITTED</span>
-                  </td>
-                  <td style="padding:10px 8px;text-align:center;font-size:11px;color:#666;">${when}</td>
-                  <td style="padding:10px 8px;text-align:center;font-weight:700;color:#28a745">${coverage}</td>
-                  <td style="padding:10px 8px;text-align:center;">
-                    <button onclick="event.stopPropagation();openSchoolDetail('${s.key}')" style="background:#004080;color:#fff;border:none;border-radius:4px;padding:5px 13px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Oswald',sans-serif;letter-spacing:0.5px;">VIEW</button>
-                  </td>
-                </tr>`;
-          });
+
+    // ── Submitted rows ──
+    sortedSubmitted.forEach(s => {
+        const rec      = getSubmittedRecord(s.key);
+        const when     = rec ? formatDate(rec.timestamp) : '—';
+        const coverage = rec?.data?.coverage_total ? rec.data.coverage_total+'%' : '—';
+        schoolRows += `
+          <tr style="cursor:pointer;background:#f0fff0;" onclick="openSchoolDetail('${s.key}')">
+            <td style="padding:10px 8px;">
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#28a745;margin-right:8px;flex-shrink:0;"></span>
+              <strong>${s.school_name}</strong>
+            </td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.district}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.chiefdom||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.facility||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;">${s.community||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;">
+              <span style="background:#28a745;color:#fff;border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.5px;">SUBMITTED</span>
+            </td>
+            <td style="padding:10px 8px;text-align:center;font-size:11px;color:#666;">${when}</td>
+            <td style="padding:10px 8px;text-align:center;font-weight:700;color:#28a745;">${coverage}</td>
+            <td style="padding:10px 8px;text-align:center;">
+              <button onclick="event.stopPropagation();openSchoolDetail('${s.key}')" style="background:#004080;color:#fff;border:none;border-radius:4px;padding:5px 13px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Oswald',sans-serif;letter-spacing:0.5px;">VIEW</button>
+            </td>
+          </tr>`;
+    });
+
+    // ── Divider row between submitted and pending ──
+    if (sortedSubmitted.length > 0 && sortedPending.length > 0) {
+        schoolRows += `
+          <tr>
+            <td colspan="9" style="padding:0;">
+              <div style="background:linear-gradient(135deg,#e67e22,#f0a500);color:#fff;padding:9px 16px;font-family:'Oswald',sans-serif;font-size:11px;font-weight:600;letter-spacing:.8px;text-transform:uppercase;display:flex;align-items:center;gap:8px;">
+                <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" width="13" height="13"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+                ${sortedPending.length} SCHOOL${sortedPending.length!==1?'S':''} NOT YET SUBMITTED
+              </div>
+            </td>
+          </tr>`;
+    }
+
+    // ── Pending rows ──
+    sortedPending.forEach(s => {
+        schoolRows += `
+          <tr style="cursor:pointer;background:#fffdf0;" onclick="loadSchoolIntoForm('${s.key}')">
+            <td style="padding:10px 8px;">
+              <span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:#ffc107;margin-right:8px;flex-shrink:0;"></span>
+              <strong style="color:#555;">${s.school_name}</strong>
+            </td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#777;">${s.district}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#777;">${s.chiefdom||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#777;">${s.facility||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;font-size:12px;color:#777;">${s.community||'—'}</td>
+            <td style="padding:10px 8px;text-align:center;">
+              <span style="background:#fff3cd;color:#856404;border:1px solid #ffc107;border-radius:4px;padding:3px 10px;font-size:11px;font-weight:600;letter-spacing:0.5px;">PENDING</span>
+            </td>
+            <td style="padding:10px 8px;text-align:center;font-size:11px;color:#aaa;">—</td>
+            <td style="padding:10px 8px;text-align:center;color:#aaa;">—</td>
+            <td style="padding:10px 8px;text-align:center;">
+              <button onclick="event.stopPropagation();loadSchoolIntoForm('${s.key}')" style="background:#e67e22;color:#fff;border:none;border-radius:4px;padding:5px 13px;font-size:11px;font-weight:600;cursor:pointer;font-family:'Oswald',sans-serif;letter-spacing:0.5px;">START</button>
+            </td>
+          </tr>`;
+    });
+
+    if (!schoolRows) {
+        schoolRows = `<tr><td colspan="9" style="padding:32px;text-align:center;color:#aaa;font-style:italic;">No schools loaded — ensure cascading_data1.csv is present.</td></tr>`;
     }
 
     body.innerHTML = `
-      <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:15px;margin-bottom:25px;">
-        <div style="background:#e8f5e9;border:2px solid #28a745;border-radius:10px;padding:20px 10px;text-align:center;">
-          <div style="font-size:36px;font-weight:700;color:#28a745;">${submitted.length}</div>
-          <div style="font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:5px;">Schools Submitted</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:25px;">
+        <div style="background:#e8f1fa;border:2px solid #004080;border-radius:10px;padding:16px 10px;text-align:center;">
+          <div style="font-size:32px;font-weight:700;color:#004080;">${total}</div>
+          <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">Target Schools</div>
         </div>
-        <div style="background:#fff8e1;border:2px solid #ffc107;border-radius:10px;padding:20px 10px;text-align:center;">
-          <div style="font-size:36px;font-weight:700;color:#e6a800;">${Object.keys(byDist).length}</div>
-          <div style="font-size:12px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:5px;">Districts Covered</div>
+        <div style="background:#e8f5e9;border:2px solid #28a745;border-radius:10px;padding:16px 10px;text-align:center;">
+          <div style="font-size:32px;font-weight:700;color:#28a745;">${submitted.length}</div>
+          <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">Submitted</div>
+        </div>
+        <div style="background:#fff8e1;border:2px solid #ffc107;border-radius:10px;padding:16px 10px;text-align:center;">
+          <div style="font-size:32px;font-weight:700;color:#e67e22;">${pending.length}</div>
+          <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">Pending</div>
+        </div>
+        <div style="background:${pct>=80?'#e8f5e9':pct>=50?'#fff8e1':'#fdecea'};border:2px solid ${pct>=80?'#28a745':pct>=50?'#ffc107':'#dc3545'};border-radius:10px;padding:16px 10px;text-align:center;">
+          <div style="font-size:32px;font-weight:700;color:${pct>=80?'#28a745':pct>=50?'#e67e22':'#dc3545'};">${pct}%</div>
+          <div style="font-size:11px;color:#555;text-transform:uppercase;letter-spacing:.5px;margin-top:4px;">Progress</div>
         </div>
       </div>
       <div style="margin-bottom:25px;">
@@ -879,7 +927,7 @@ window.openSummaryModal = function() {
       </div>
       <div>
         <div style="background:#004080;color:#fff;padding:12px 20px;border-radius:8px 8px 0 0;font-size:14px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;display:flex;justify-content:space-between;align-items:center;">
-          <span>Submitted Schools</span>
+          <span>All Schools — ${submitted.length} Submitted · ${pending.length} Pending</span>
           <span style="font-size:12px;font-weight:400;opacity:.8;">Click any row to view details</span>
         </div>
         <div style="overflow-x:auto;border:2px solid #dee2e6;border-top:none;border-radius:0 0 8px 8px;">
